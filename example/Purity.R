@@ -10,17 +10,19 @@ library(DropletUtils)
 
 library(Rtsne)
 
-# Define functions
-getPurity = function(clusters, classes) {
-  sum(apply(table(classes, clusters), 1, max))/length(clusters)
-}
 
-
-### Data preparation
 # Load MairPBMCData dataset and store it in 'sce' variable
 sce <- MairPBMCData()
 sce
+# Create mapping vector of rownames to Symbol
+symbol_map = rowData(sce)$Symbol
+names(symbol_map) = rownames(sce)
 
+symbol_map
+
+
+
+### Data preparation
 # Filtering for empty droplets
 # Set random seed for reproducibility
 set.seed(42)
@@ -104,40 +106,64 @@ sce$CellTypes <- factor(pred$pruned.labels)
 # Retrieve relevant data
 sce_logcounts = logcounts(sce)
 
-# Fix rownames (duplicates and use of underscores)
+# Fix rownames (duplicates and use of dashes)
 new_rownames = gsub("-", "_", rownames(sce_logcounts))
-new_rownames = make.names(new_rownames, unique=TRUE)
-rownames(sce_logcounts) = gsub("_", "-", new_rownames)
+rownames(sce_logcounts) = make.names(new_rownames, unique=TRUE)
 
-# Retrieve HVGs (seurat)
+# Retrieve HVGs (seurat and M3Drop)
 data <- read.csv("seurat_matrix.csv", header = FALSE)
 seurat_matrix <- as.matrix(data)
 seurat_matrix <- seurat_matrix[2:31, ]
 
-# According to the paper, using PCs 2 to 6 is best ¯\_(ツ)_/¯
-# and i don't know what else it could mean, but these components
+data <- read.csv("M3Drop_matrix.csv", header = FALSE)
+M3Drop_matrix <- as.matrix(data)
+M3Drop_matrix <- M3Drop_matrix[2:31, ]
 
-# Vector for storing purity for each clustering
-purities = c(1:5)
-
-for (i in 1:5) {
-  # Getting expression data for genes of (i+1)th PC 
-  sce_logcounts_genes = as.data.frame(t(sce_logcounts[seurat_matrix[,i+1],]))
-  # Adding cell-type as separate column
-  sce_logcounts_genes$CellType = sce$CellTypes
-  # Removing duplicates (ignoring the CellType column)
-  sce_logcounts_genes = sce_logcounts_genes[!duplicated(subset(sce_logcounts_genes, select=-c(CellType))), ]
-  
-  # Running t-SNE (with the library from the paper) on expression data
-  sce_tSNE = Rtsne(subset(sce_logcounts_genes, select=-c(CellType)), perplexity=50, max_iter=2000, early_exag_coeff=12, stop_lying_iter=1000)
-  # K-means clustering. I chose 28 clusters, since that's the amount of predicted
-  # cell types. If that's not how that should be done, pls change
-  sce_cluster <- kmeans(sce_tSNE$Y, center=28, nstart=20)
-  
-  # Calculating purity for (i+1)th clustering
-  purities[i] = getPurity(sce_logcounts_genes$CellType, sce_cluster$cluster)
+# Define functions
+getPurity = function(clusters, classes) {
+  # Just the purity math formula
+  sum(apply(table(classes, clusters), 1, max))/length(clusters)
 }
 
-# Final purity score for this method (seurat) with this database (MairPBMCData)
-purity_score = mean(purities)
-purity_score
+getPurityByMethodMatrix = function(matrix) {
+  # Vector for storing purity for each clustering
+  purities = c(1:5)
+  
+  # According to the paper, using PCs 2 to 6 is best ¯\_(ツ)_/¯
+  # and I don't know what else that could be but these components
+  
+  for (i in 1:5) {
+    # Voodoo magic that makes all gene names the same across all datasets.. hopefully
+    ith_pc_genes = unname(symbol_map[matrix[,1]])
+    ith_pc_genes[is.na(ith_pc_genes)] = matrix[is.na(ith_pc_genes),1]
+    ith_pc_genes = gsub("-", "_", ith_pc_genes)
+    # Getting expression data for genes of (i+1)th PC 
+    sce_logcounts_genes = as.data.frame(t(sce_logcounts[ith_pc_genes,]))
+    # Adding cell-type as separate column
+    sce_logcounts_genes$CellType = sce$CellTypes
+    # Removing duplicates (ignoring the CellType column)
+    sce_logcounts_genes = sce_logcounts_genes[!duplicated(subset(sce_logcounts_genes, select=-c(CellType))), ]
+    
+    # Running t-SNE (with the library from the paper) on expression data
+    sce_tSNE = Rtsne(subset(sce_logcounts_genes, select=-c(CellType))) #, perplexity=50, max_iter=2000, early_exag_coeff=12, stop_lying_iter=1000)
+    # K-means clustering. I chose 28 clusters, since that's the amount of predicted
+    # cell types. If that's not how that should be done, pls change
+    sce_cluster <- kmeans(sce_tSNE$Y, center=28, nstart=20)
+    
+    # Calculating purity for (i+1)th clustering
+    purities[i] = getPurity(sce_logcounts_genes$CellType, sce_cluster$cluster)
+  }
+  
+  # Final purity score for this method (seurat) with this database (MairPBMCData)
+  purity_score = mean(purities)
+  return(list(purities, purity_score))
+}
+
+# Run purity scoring function on HVGs
+M3Drop_purity_score = getPurityByMethodMatrix(M3Drop_matrix)
+seurat_purity_score = getPurityByMethodMatrix(M3Drop_matrix)
+
+# First list is the 5 purity scores, second list is the average value
+# and thus the final score
+M3Drop_purity_score
+seurat_purity_score
