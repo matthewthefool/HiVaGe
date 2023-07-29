@@ -5,8 +5,11 @@ library(scater)
 library(scDblFinder)
 library(celldex)
 library(SingleR)
-
 library(Rtsne)
+library(scry)
+library(scran)
+library(igraph)
+library(clusterSim)
 
 
 # Load MairPBMCData dataset and store it in 'sce' variable
@@ -102,6 +105,20 @@ sce$CellTypes <- factor(pred$pruned.labels)
 
 
 
+### Metrics
+# Retrieve HVGs (M3Drop and seurat)
+data <- read.csv("M3Drop_matrix.csv", header = FALSE)
+M3Drop_matrix <- as.matrix(data)
+M3Drop_matrix <- M3Drop_matrix[2:31, ]
+# Standardize names for HVGs
+M3Drop_matrix = standardizeGeneSymbols(symbol_map, M3Drop_matrix[,1])
+
+data <- read.csv("seurat_matrix.csv", header = FALSE)
+seurat_matrix <- as.matrix(data)
+seurat_matrix <- seurat_matrix[2:31, ]
+# Standardize names for HVGs
+seurat_matrix = standardizeGeneSymbols(symbol_map, seurat_matrix[,1])
+
 ### Purity testing
 ## Define functions
 getPurity = function(clusters, classes) {
@@ -115,17 +132,16 @@ getPurityByMethod = function(hvgs, singleCell, tSNE_count = 5) {
   sce_logcounts = logcounts(singleCell)
   # Vector for storing purity for each clustering
   purities = c(1:tSNE_count)
- 
-  ith_pc_genes = standardizeGeneSymbols(symbol_map, hvgs)
+  
   # Getting expression data for genes of HVGs
-  sce_logcounts_genes = as.data.frame(t(sce_logcounts[ith_pc_genes,]))
+  sce_logcounts_genes = as.data.frame(t(sce_logcounts[hvgs,]))
   # Adding cell-type as separate column
   sce_logcounts_genes$CellType = singleCell$CellTypes
   # Removing duplicates (ignoring the CellType column)
   sce_logcounts_genes = sce_logcounts_genes[!duplicated(subset(sce_logcounts_genes, select=-c(CellType))), ]
   
   for (i in 1:tSNE_count) {
-    print(paste("Running t-SNE #", i, "..."))
+    print(paste("Running t-SNE #", i, "...", sep = ""))
     # Running t-SNE (with the library from the paper) on expression data
     sce_tSNE = Rtsne(subset(sce_logcounts_genes, select=-c(CellType)), dims = 2) #, perplexity=50, max_iter=2000, early_exag_coeff=12, stop_lying_iter=1000)
     
@@ -143,20 +159,60 @@ getPurityByMethod = function(hvgs, singleCell, tSNE_count = 5) {
 }
 
 ## Example use
-# Retrieve HVGs (M3Drop and seurat)
-data <- read.csv("M3Drop_matrix.csv", header = FALSE)
-M3Drop_matrix <- as.matrix(data)
-M3Drop_matrix <- M3Drop_matrix[2:31, ]
-
-data <- read.csv("seurat_matrix.csv", header = FALSE)
-seurat_matrix <- as.matrix(data)
-seurat_matrix <- seurat_matrix[2:31, ]
-
 # Run purity scoring function on HVGs
-M3Drop_purity_score = getPurityByMethod(M3Drop_matrix[,1], sce)
-seurat_purity_score = getPurityByMethod(seurat_matrix[,1], sce)
+M3Drop_purity_score = getPurityByMethod(M3Drop_matrix, sce)
+seurat_purity_score = getPurityByMethod(seurat_matrix, sce)
 
-# First list is the 5 purity scores, second list is the average value
-# and thus the final score
+# First list is 5 purity scores of 5 t-SNE runs, second list is the average value
+# and thus it's the final score
 M3Drop_purity_score
 seurat_purity_score
+
+
+### Dependency with mean expression testing
+## Define function
+getOverlapWithHighlyExpressed <- function(hvgs, singlecell, amount_of_genes_to_check = 30) {
+  # Get pseudo-bulk data from SingleCellExperiment
+  pseudo_bulk = matrix(apply(counts(singlecell), 1, sum))
+  rownames(pseudo_bulk) = rownames(counts(singlecell))
+  # Log-normalized counts of pseudo-bulk data
+  pseudo_bulk = normalizeCounts(pseudo_bulk)
+  # Order based on expression
+  pseudo_bulk = pseudo_bulk[order(pseudo_bulk, decreasing = TRUE),]
+  
+  # Get the set amount of highly expressed genes to test overlap
+  hegs = names(pseudo_bulk[1:amount_of_genes_to_check])
+
+  # Calculate and return overlap
+  overlap = table(unique(c(hvgs)) %in% hegs)
+  return(unname(overlap["TRUE"]/sum(overlap)))
+}
+
+## Example use
+# Run the dependency test
+M3Drop_meanDependence = getOverlapWithHighlyExpressed(M3Drop_matrix, sce)
+seurat_meanDependence = getOverlapWithHighlyExpressed(seurat_matrix, sce)
+
+M3Drop_meanDependence
+seurat_meanDependence
+
+
+### Calculate CH and DB indexes
+# Get data from SingleCellExperiment for the HVGs
+filtered <- sce[M3Drop_matrix, ]
+# Run GLMPCA for dimensionality reduction
+filtered <- GLMPCA(filtered, L=10, minibatch="stochastic")
+# Build shared nearest-neighbor graph (SNNGraph)
+g <- buildSNNGraph(filtered, k=10, use.dimred = 'GLMPCA')
+# Perform Louvain clustering on the SNNGraph
+clust <- cluster_louvain(g)
+# Add cluster data as a factor to "filtered" variable
+filtered$Louvain <- factor(membership(clust))
+
+# Calculate Calinski-Harabasz index
+M3Drop_CH_index = round(index.G1(t(counts(filtered)), as.integer(filtered$Louvain)), digits=2)
+# Calculate Davies-Bouldin index
+M3Drop_DB_index = round(index.DB(t(counts(filtered)), as.integer(filtered$Louvain))$DB, digits=2)
+
+M3Drop_CH_index
+M3Drop_DB_index
