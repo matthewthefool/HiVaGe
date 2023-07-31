@@ -18,6 +18,9 @@ library(fossil)
 
 library(RBGL)
 
+library(tibble)
+library(ROGUE)
+
 # Load MairPBMCData dataset and store it in 'sce' variable
 sce <- MairPBMCData()
 sce
@@ -147,7 +150,7 @@ getPurityByMethod = function(hvgs, singleCell, tSNE_count = 5) {
   sce_logcounts_genes = sce_logcounts_genes[!duplicated(subset(sce_logcounts_genes, select=-c(CellType))), ]
   
   for (i in 1:tSNE_count) {
-    print(paste("Running t-SNE #", i, "...", sep = ""))
+    cat("\r",paste("Running t-SNE #", i, "...", sep = ""))
     # Running t-SNE (with the library from the paper) on expression data
     sce_tSNE = Rtsne(subset(sce_logcounts_genes, select=-c(CellType)), dims = 2) #, perplexity=50, max_iter=2000, early_exag_coeff=12, stop_lying_iter=1000)
     
@@ -167,12 +170,12 @@ getPurityByMethod = function(hvgs, singleCell, tSNE_count = 5) {
 ## Example use
 # Run purity scoring function on HVGs
 M3Drop_purity_score = getPurityByMethod(M3Drop_matrix, sce)
-seurat_purity_score = getPurityByMethod(seurat_matrix, sce)
+#seurat_purity_score = getPurityByMethod(seurat_matrix, sce)
 
 # First list is 5 purity scores of 5 t-SNE runs, second list is the average value
 # and thus it's the final score
 M3Drop_purity_score
-seurat_purity_score
+#seurat_purity_score
 
 
 ### Dependency with mean expression testing
@@ -203,7 +206,7 @@ M3Drop_meanDependence
 seurat_meanDependence
 
 
-### Calculate CH, DB, AR indexes and Average Silhouette Width
+### Calculate CH, DB, AR indexes, Average Silhouette Width and ROGUE score
 ### based on clustering
 ## Clustering based on HVGs
 set.seed(42)
@@ -220,8 +223,7 @@ filtered$Louvain <- factor(membership(clust))
 # filtered <- runTSNE(filtered, dimred="GLMPCA")
 # plotTSNE(filtered, colour_by="Louvain")
 
-## Calculating clustering metrics
-# Define function
+## Define function for calculation of every clustering metric, but the ROGUE score (ROGUE score is separate)
 getClusteringMetrics <- function(singleCell, clustering, labels, assay.type = "counts", round = 3){
   # Get relevant data
   if (assay.type == "counts"){
@@ -237,13 +239,13 @@ getClusteringMetrics <- function(singleCell, clustering, labels, assay.type = "c
   # Prepare results list
   res = list()
   
-  print("Calculating CH and DB indexes..")
+  cat("\r","Calculating CH and DB indexes..")
   # Calculate Calinski-Harabasz index
   res$CH_index = round(index.G1(sce_data, clustering), digits=round)
   # Calculate Davies-Bouldin index
   res$DB_index = round(index.DB(sce_data, clustering)$DB, digits=round)
   
-  print("Calculating average silhouette width..")
+  cat("\r","Calculating average silhouette width.. (this one takes awhile)")
   # Calculate average silhouette width
   # First get distance matrix
   sce_dist_matrix = dist(sce_data)
@@ -252,22 +254,79 @@ getClusteringMetrics <- function(singleCell, clustering, labels, assay.type = "c
   # Get average silhouette width
   res$ASW =  round(summary(si_asw)$avg.width, digits=round)
   
-  print("Calculating Adjusted Rand Index..")
+  cat("\r","Calculating Adjusted Rand Index..")
   # Calculate Adjusted Rand Index
   res$ARI_index = round(adj.rand.index(labels, clustering), digits=round)
+  
+  library(tibble)
+  library(ROGUE)
+  
   
   # Return results
   return(res)
 }
 
 ## Example use
-M3Drop_clustering_metrics = getClusteringMetrics(filtered, filtered$Louvain, sce$CellTypes, assay.type = "counts")
+M3Drop_clustering_metrics = getClusteringMetrics(sce, filtered$Louvain, sce$CellTypes, assay.type = "counts")
 
 M3Drop_clustering_metrics
 
 
-## Correlated gene pairs with Spearman's rho
-# Define function
+## Define function to calculate ROGUE scores for each cluster for each sample
+getROGUEScore <- function(hvgs, singleCell, clustering, sampling, platform, assay.type = "counts", min.cell.n = 10) {
+  # Get all the cluster names
+  clusters = unique(clustering)
+  # Get all the sample names
+  samples = unique(sampling)
+  # Prepare results matrix
+  res = matrix(nrow = length(clusters), ncol = length(samples))
+  rownames(res) = clusters
+  colnames(res) = samples
+  
+  print(paste("Cluster count:", length(clusters), ", sample count:", length(samples), sep = ""))
+  
+  for (i in 1:length(clusters)) {
+    for (j in 1:length(samples)) {
+      cat("\r",paste("Working with cluster: ", clusters[i], ", Sample: ", samples[j], sep = ""))
+      
+      # Get relevant data (cells from cluster i-th and sample j-th)
+      if (assay.type == "counts"){
+        tmp = counts(singleCell[,clustering == clusters[i] & sampling == samples[j]])
+      } else if (assay.type == "logcounts"){
+        tmp = logcounts(singleCell[,clustering == clusters[i] & sampling == samples[j]])
+      } else {
+        stop("Innappropriate assay type")
+      }
+      
+      # Filter out data will too little cells
+      if (dim(tmp)[2] >= min.cell.n) {
+        # Running the S-E model
+        tmp.res <- SE_fun(tmp)
+        # Running ROGUE score calculation
+        res[i,j] = CalculateRogue(tmp.res, features = hvgs, platform = platform)
+      } else {
+        # Too little cells!
+        res[i,j] = NA
+      }
+    }
+  }
+  # Return result matrix
+  return(res)
+}
+
+
+## Example use
+M3Drop_ROGUE_scores = getROGUEScore(M3Drop_matrix, sce, clustering = filtered$Louvain,
+                                    sampling = filtered$Sample_Name, platform = "full-length",
+                                    assay.type = "counts")
+# Calculating average ROGUE score
+M3Drop_avrROGUE = mean(apply(M3Drop_ROGUE_scores, 1, mean, na.rm=TRUE), na.rm=TRUE)
+# ROGUE score boxplot
+rogue.boxplot(as.data.frame(t(M3Drop_ROGUE_scores)))
+
+
+### Correlated gene pairs with Spearman's rho
+## Define function
 correlatedHVGs <- function(singleCell_filtered_by_hvgs) {
   cor_genes <- correlatePairs(singleCell_filtered_by_hvgs)
   # Get significant correlated pairs
