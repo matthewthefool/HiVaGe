@@ -5,12 +5,18 @@ library(scater)
 library(scDblFinder)
 library(celldex)
 library(SingleR)
+
 library(Rtsne)
+
 library(scry)
 library(scran)
 library(igraph)
+
 library(clusterSim)
 
+library(fossil)
+
+library(RBGL)
 
 # Load MairPBMCData dataset and store it in 'sce' variable
 sce <- MairPBMCData()
@@ -197,7 +203,10 @@ M3Drop_meanDependence
 seurat_meanDependence
 
 
-### Calculate CH and DB indexes
+### Calculate CH, DB, AR indexes and Average Silhouette Width
+### based on clustering
+## Clustering based on HVGs
+set.seed(42)
 # Get data from SingleCellExperiment for the HVGs
 filtered <- sce[M3Drop_matrix, ]
 # Run GLMPCA for dimensionality reduction
@@ -208,11 +217,79 @@ g <- buildSNNGraph(filtered, k=10, use.dimred = 'GLMPCA')
 clust <- cluster_louvain(g)
 # Add cluster data as a factor to "filtered" variable
 filtered$Louvain <- factor(membership(clust))
+# filtered <- runTSNE(filtered, dimred="GLMPCA")
+# plotTSNE(filtered, colour_by="Louvain")
 
-# Calculate Calinski-Harabasz index
-M3Drop_CH_index = round(index.G1(t(counts(filtered)), as.integer(filtered$Louvain)), digits=2)
-# Calculate Davies-Bouldin index
-M3Drop_DB_index = round(index.DB(t(counts(filtered)), as.integer(filtered$Louvain))$DB, digits=2)
+## Calculating clustering metrics
+# Define function
+getClusteringMetrics <- function(singleCell, clustering, labels, assay.type = "counts", round = 3){
+  # Get relevant data
+  if (assay.type == "counts"){
+    sce_data = t(counts(singleCell))
+  } else if (assay.type == "logcounts"){
+    sce_data = t(logcounts(singleCell))
+  } else {
+    stop("Innappropriate assay type")
+  }
+  # Make sure clustering and labels are good
+  clustering = as.integer(factor(clustering))
+  labels = as.integer(factor(labels))
+  # Prepare results list
+  res = list()
+  
+  print("Calculating CH and DB indexes..")
+  # Calculate Calinski-Harabasz index
+  res$CH_index = round(index.G1(sce_data, clustering), digits=round)
+  # Calculate Davies-Bouldin index
+  res$DB_index = round(index.DB(sce_data, clustering)$DB, digits=round)
+  
+  print("Calculating average silhouette width..")
+  # Calculate average silhouette width
+  # First get distance matrix
+  sce_dist_matrix = dist(sce_data)
+  # Calculate silhouettes
+  si_asw = silhouette(clustering, sce_dist_matrix)
+  # Get average silhouette width
+  res$ASW =  round(summary(si_asw)$avg.width, digits=round)
+  
+  print("Calculating Adjusted Rand Index..")
+  # Calculate Adjusted Rand Index
+  res$ARI_index = round(adj.rand.index(labels, clustering), digits=round)
+  
+  # Return results
+  return(res)
+}
 
-M3Drop_CH_index
-M3Drop_DB_index
+## Example use
+M3Drop_clustering_metrics = getClusteringMetrics(filtered, filtered$Louvain, sce$CellTypes, assay.type = "counts")
+
+M3Drop_clustering_metrics
+
+
+## Correlated gene pairs with Spearman's rho
+# Define function
+correlatedHVGs <- function(singleCell_filtered_by_hvgs) {
+  cor_genes <- correlatePairs(singleCell_filtered_by_hvgs)
+  # Get significant correlated pairs
+  sig_cor_genes <- cor_genes$FDR <= 0.05
+  #summary(sig_cor_genes)
+  # Build undirected graph of correlated genes
+  g_cor_genes <- ftM2graphNEL(cbind(cor_genes$gene1, cor_genes$gene2)[sig_cor_genes,],
+                              W=NULL, V=NULL, edgemode="undirected")
+  # Get clusters of correlated genes
+  cl_cor_genes <- highlyConnSG(g_cor_genes)$clusters
+  # Order them by size
+  cl_cor_genes <- cl_cor_genes[order(lengths(cl_cor_genes), decreasing=TRUE)]
+  
+  # Prepare result list
+  res = list()
+  res$gene_correlation_df = cor_genes
+  res$correlated_gene_clusters = cl_cor_genes
+  # Return results
+  return(res)
+}
+
+## Example use
+M3Drop_correlated_gene_pairs = correlatedHVGs(filtered)
+
+M3Drop_correlated_gene_pairs
