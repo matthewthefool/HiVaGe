@@ -21,115 +21,9 @@ library(RBGL)
 library(tibble)
 library(ROGUE)
 
-# Load MairPBMCData dataset and store it in 'sce' variable
-sce <- MairPBMCData()
-sce
-
-# Create mapping vector of rownames to Symbol
-symbol_map = rowData(sce)$Symbol
-names(symbol_map) = rownames(sce)
-
-symbol_map
-
-# Fix rownames (duplicates and use of dashes)
-rownames(sce) <- rowData(sce)$Symbol
-new_rownames = gsub("-", "_", rownames(sce))
-rownames(sce) = make.names(new_rownames, unique=TRUE)
-
-standardizeGeneSymbols = function(map, genes) {
-  # Voodoo magic that makes all gene names the same across all datasets.. hopefully
-  standard_gene_symbols = unname(map[genes])
-  standard_gene_symbols[is.na(standard_gene_symbols)] = genes[is.na(standard_gene_symbols)]
-  standard_gene_symbols = gsub("-", "_", standard_gene_symbols)  
-  return(standard_gene_symbols)
-}
-
-
-### Data preparation (copied from profiling)
-# Filtering for empty droplets
-# Set random seed for reproducibility
-set.seed(42)
-
-# Identify empty droplets using 'emptyDrops' function
-e.out <- emptyDrops(counts(sce))
-
-# Summary of empty droplet filtering results
-summary(e.out$FDR <= 0.001)
-
-# Create a table showing the counts threshold and FDR filtering results
-table(colSums(counts(sce)) > 100, e.out$FDR <= 0.001, useNA = "ifany")
-
-# Apply the filtering based on FDR threshold to 'sce'
-sce <- sce[, which(e.out$FDR <= 0.001)]
-sce
-
-# Summary of columns and rows with all-zero counts
-summary(colMeans(counts(sce) == 0))
-summary(rowMeans(counts(sce) == 0))
-
-# Identify cells with all-zero counts for all genes
-allzero <- rowMeans(counts(sce) == 0) == 1
-
-# Create a table showing the number of cells with all-zero counts
-table(allzero)
-
-# Remove cells with all-zero counts for all genes from 'sce'
-sce <- sce[which(!allzero),]
-
-# Log-normalization
-# Perform log-normalization on 'sce' using logNormCounts function
-sce <- logNormCounts(sce)
-
-# Dimensionality reduction with PCA
-# Run PCA on 'sce'
-sce <- runPCA(sce)
-
-# Compute doublet density using the reduced dimensions from PCA
-dbl.dens <- computeDoubletDensity(sce, d = ncol(reducedDim(sce)))
-
-# Add doublet scores to the 'sce' object
-sce$DoubletScore <- dbl.dens
-
-# Summary of doublet scores
-summary(dbl.dens)
-
-# Identify doublets using doubletThresholding function
-dbl.calls <- doubletThresholding(data.frame(score = dbl.dens),
-                                 method = "griffiths", returnType = "call")
-
-# Remove doublets from 'sce' based on the identified doublet calls
-sce <- sce[, dbl.calls == "singlet"]
-
-# Perform PCA again
-sce <- runPCA(sce)
-
-# Load reference data for SingleR
-ref <- MonacoImmuneData()
-
-# Perform SingleR prediction on 'sce' using the reference data
-pred <- SingleR(test = sce, ref = ref, labels = ref$label.fine, assay.type.test = "logcounts")
-
-# Assign the predicted cell types to 'sce$CellTypes'
-sce$CellTypes <- factor(pred$pruned.labels)
-
-
-
 ### Metrics
-# Retrieve HVGs (M3Drop and seurat)
-data <- read.csv("R/flowers_and_clouds/M3Drop_matrix.csv", header = FALSE)
-M3Drop_matrix <- as.matrix(data)
-M3Drop_matrix <- M3Drop_matrix[2:31, ]
-# Standardize names for HVGs
-M3Drop_matrix = standardizeGeneSymbols(symbol_map, M3Drop_matrix[,1])
-
-data <- read.csv("R/flowers_and_clouds/seurat_matrix.csv", header = FALSE)
-seurat_matrix <- as.matrix(data)
-seurat_matrix <- seurat_matrix[2:31, ]
-# Standardize names for HVGs
-seurat_matrix = standardizeGeneSymbols(symbol_map, seurat_matrix[,1])
 
 ### Purity testing
-## Define functions
 calcPurity = function(clusters, classes) {
   # Just the purity math formula
   sum(apply(table(classes, clusters), 1, max))/length(clusters)
@@ -167,19 +61,8 @@ getAvrPurity = function(hvgs, sce_object, labels, tSNE_count = 5) {
   return(list(purities = purities, purity_score = purity_score))
 }
 
-## Example use
-# Run purity scoring function on HVGs
-M3Drop_purity_score = getAvrPurity(M3Drop_matrix, sce, labels = sce$CellTypes)
-#seurat_purity_score = getAvrPurity(seurat_matrix, sce, labels = sce$CellTypes)
-
-# First list is 5 purity scores of 5 t-SNE runs, second list is the average value
-# and thus it's the final score
-M3Drop_purity_score
-#seurat_purity_score
-
 
 ### Dependency with mean expression testing
-## Define function
 getOverlapWithHighLowExpressed <- function(hvgs, sce_object, amount_of_genes_to_check = length(hvgs)) {
   # Get pseudo-bulk data from sce_objectExperiment
   pseudo_bulk = matrix(apply(counts(sce_object), 1, sum))
@@ -205,35 +88,8 @@ getOverlapWithHighLowExpressed <- function(hvgs, sce_object, amount_of_genes_to_
 #corel = data.frame(var =log(apply(counts(sce), 1, var)), mean = log(apply(counts(sce), 1, mean)))
 #ggplot(corel, aes(x = mean, y = var)) + geom_point()+ stat_smooth(method = "lm", col = "red")
 
-## Example use
-# Run the dependency test
-M3Drop_meanDependence = getOverlapWithHighLowExpressed(M3Drop_matrix, sce)
-seurat_meanDependence = getOverlapWithHighLowExpressed(seurat_matrix, sce)
 
-#higly_overlap - overlap with highly expressed genes (positive correlation)
-#lowly_overlap - overlap with lowly expressed genes (negative correlation)
-M3Drop_meanDependence
-seurat_meanDependence
-
-
-### Calculate CH, DB, AR indexes, Average Silhouette Width and ROGUE score
-### based on clustering
-## Clustering based on HVGs
-set.seed(42)
-# Get data from sce_objectExperiment for the HVGs
-filtered <- sce[M3Drop_matrix, ]
-# Run GLMPCA for dimensionality reduction
-filtered <- GLMPCA(filtered, L=10, minibatch="stochastic")
-# Build shared nearest-neighbor graph (SNNGraph)
-g <- buildSNNGraph(filtered, k=10, use.dimred = 'GLMPCA')
-# Perform Louvain clustering on the SNNGraph
-clust <- cluster_louvain(g)
-# Add cluster data as a factor to "filtered" variable
-filtered$Louvain <- factor(membership(clust))
-# filtered <- runTSNE(filtered, dimred="GLMPCA")
-# plotTSNE(filtered, colour_by="Louvain")
-
-## Define function for calculation of every clustering metric, but the ROGUE score (ROGUE score is separate)
+### Calculation of every clustering metric, but the ROGUE score (ROGUE score is separate)
 getClusteringMetrics <- function(sce_object, clustering, labels, assay.type = "counts", round = 3){
   # Get relevant data
   if (assay.type == "counts"){
@@ -272,13 +128,8 @@ getClusteringMetrics <- function(sce_object, clustering, labels, assay.type = "c
   return(res)
 }
 
-## Example use
-M3Drop_clustering_metrics = getClusteringMetrics(sce, filtered$Louvain, sce$CellTypes, assay.type = "counts")
 
-M3Drop_clustering_metrics
-
-
-## Define function to calculate ROGUE scores for each cluster for each sample
+### Calculate ROGUE scores for each cluster for each sample
 getROGUEScore <- function(hvgs, sce_object, clustering, sampling, platform, assay.type = "counts", min.cell.n = 10) {
   # Get all the cluster names
   clusters = unique(clustering)
@@ -321,18 +172,7 @@ getROGUEScore <- function(hvgs, sce_object, clustering, sampling, platform, assa
 }
 
 
-## Example use
-M3Drop_ROGUE_scores = getROGUEScore(M3Drop_matrix, sce, clustering = filtered$Louvain,
-                                    sampling = filtered$Sample_Name, platform = "full-length",
-                                    assay.type = "counts")
-# Calculating average ROGUE score
-M3Drop_avrROGUE = mean(apply(M3Drop_ROGUE_scores, 1, mean, na.rm=TRUE), na.rm=TRUE)
-# ROGUE score boxplot
-rogue.boxplot(as.data.frame(t(M3Drop_ROGUE_scores)))
-
-
 ### Correlated gene pairs with Spearman's rho
-## Define function
 correlatedHVGs <- function(hvgs, sce_object) {
   cor_genes <- correlatePairs(sce_object)
   cor_genes <- cor_genes[(cor_genes$gene1 %in% hvgs) & (cor_genes$gene2 %in% hvgs),]
@@ -354,8 +194,3 @@ correlatedHVGs <- function(hvgs, sce_object) {
   # Return results
   return(res)
 }
-
-## Example use
-M3Drop_correlated_gene_pairs = correlatedHVGs(M3Drop_matrix, sce)
-
-M3Drop_correlated_gene_pairs
