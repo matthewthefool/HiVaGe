@@ -1,24 +1,37 @@
 ### Set-up libraries for metrics
+library(dplyr)
 library(scRNAseq)
 library(DropletUtils)
 library(scater)
 library(scDblFinder)
 library(celldex)
 library(SingleR)
+
 library(Rtsne)
+
 library(scry)
 library(scran)
 library(igraph)
+
 library(clusterSim)
+
 library(fossil)
+
 library(RBGL)
+
 library(tibble)
 library(ROGUE)
 
 ### Set-up libraries for HVGs
 library(reticulate)
+source_python("HiVaGePY.py")
+
 library(magrittr)
 library(Seurat)
+source("scVEGs.R")
+library("singleCellHaystack")
+library("scmap")
+library(SIEVE)
 
 
 ## Message printing function
@@ -30,18 +43,21 @@ replaceCat <- function(x, width = 50)
 
 
 ### Dependency with mean expression testing
-getOverlapWithHighLowExpressed <- function(hvgs, sce_object, amount_of_genes_to_check = length(hvgs)) {
-  # Get pseudo-bulk data from sce_objectExperiment
-  pseudo_bulk = matrix(apply(counts(sce_object), 1, sum))
-  rownames(pseudo_bulk) = rownames(counts(sce_object))
-  # Log-normalized counts of pseudo-bulk data
+getOverlapWithHighLowExpressed <- function(hvgs, sce_object, batching = 1, amount_of_genes_to_check = length(hvgs)) {
+  batches = levels(factor(batching))
+  pseudo_bulk = matrix(nrow = length(rownames(sce_object)), ncol = length(batches))
+  colnames(pseudo_bulk) = batches
+  for (i in batches) {
+    pseudo_bulk[,i] = apply(counts(sce_object[, batching == i]), 1, sum)
+  }
   pseudo_bulk = normalizeCounts(pseudo_bulk)
-  # Order based on expression
-  pseudo_bulk = pseudo_bulk[order(pseudo_bulk, decreasing = TRUE),]
+  avr_expr = apply(pseudo_bulk, 1, mean)
+  names(avr_expr) = rownames(counts(sce_object))
+  avr_expr = sort(avr_expr, decreasing = TRUE)
   
   # Get the set amount of highly/lowly expressed genes to test overlap
-  hegs = names(pseudo_bulk[1:amount_of_genes_to_check])
-  legs = names(pseudo_bulk[(length(pseudo_bulk)-amount_of_genes_to_check):length(pseudo_bulk)])
+  hegs = names(avr_expr[1:amount_of_genes_to_check])
+  legs = names(avr_expr[(length(avr_expr)-amount_of_genes_to_check):length(avr_expr)])
   
   # Calculate and return overlap
   overlap_h = table(unique(c(hvgs)) %in% hegs)
@@ -77,7 +93,7 @@ getAvrPurity = function(hvgs, sce_object, labels, tSNE_count = 5) {
   for (i in 1:tSNE_count) {
     replaceCat(paste("Running t-SNE #", i, "...", sep = ""))
     # Running t-SNE (with the library from the paper) on expression data
-    sce_tSNE = Rtsne(subset(sce_logcounts_genes, select=-c(CellType)), dims = 2) #, perplexity=50, max_iter=2000, early_exag_coeff=12, stop_lying_iter=1000)
+    sce_tSNE = Rtsne(subset(sce_logcounts_genes, select=-c(CellType)), dims = 2, check_duplicates = FALSE) #, perplexity=50, max_iter=2000, early_exag_coeff=12, stop_lying_iter=1000)
     
     # K-means clustering. I chose 28 clusters, since that's the amount of predicted
     # cell types. If that's not how that should be done, pls change
@@ -137,7 +153,31 @@ getROGUEScore <- function(hvgs, sce_object, clustering, sampling, platform, assa
 
 
 ### Calculate correlation between HVGs
-HiVaGe <- function(sce_object, flavour, percentile) {
+correlatedHVGs <- function(hvgs, sce_object) {
+  cor_genes <- correlatePairs(sce_object)
+  cor_genes <- cor_genes[(cor_genes$gene1 %in% hvgs) & (cor_genes$gene2 %in% hvgs),]
+  # Get significant correlated pairs
+  sig_cor_genes <- cor_genes$FDR <= 0.05
+  #summary(sig_cor_genes)
+  # Build undirected graph of correlated genes
+  g_cor_genes <- ftM2graphNEL(cbind(cor_genes$gene1, cor_genes$gene2)[sig_cor_genes,],
+                              W=NULL, V=NULL, edgemode="undirected")
+  # Get clusters of correlated genes
+  cl_cor_genes <- highlyConnSG(g_cor_genes)$clusters
+  # Order them by size
+  cl_cor_genes <- cl_cor_genes[order(lengths(cl_cor_genes), decreasing=TRUE)]
+  
+  # Prepare result list
+  res = list()
+  res$gene_correlation_df = cor_genes
+  res$correlated_gene_clusters = cl_cor_genes
+  # Return results
+  return(res)
+}
+
+
+### Get HVGs based on method
+HiVaGe <- function(sce_object, flavour, batching = 1, percentile) {
   # Should already be preinstalled rPython, scLVM, scVEGs (file "scVEGs.R" should be in same directory as "HiVaGe" function), SIEVE
   num_HVGs <- as.integer(nrow(assays(sce_object)$counts) * percentile)
   sce_object <- logNormCounts(sce_object)
@@ -158,7 +198,7 @@ HiVaGe <- function(sce_object, flavour, percentile) {
     # BASiCS
     # Could use spike-ins
     library(BASiCS)  # Load the BASiCS package if not already loaded
-    BASiCS <- newBASiCS_Data(counts(sce_object), Tech = FALSE, SpikeInfo = NULL, BatchInfo = sce_object$Sample_Name)
+    BASiCS <- newBASiCS_Data(counts(sce_object), Tech = FALSE, SpikeInfo = NULL, BatchInfo = batching)
     Chain <- BASiCS_MCMC(Data = BASiCS, N = 1000, Thin = 10, Burn = 500, WithSpikes = FALSE, Regression = TRUE, PrintProgress = FALSE)
     HVGs_BASiCS <- BASiCS_DetectVG(Chain, Task = c("HVG"), PercentileThreshold = percentile, VarThreshold = NULL, ProbThreshold = 0.5, EpsilonThreshold = NULL, EFDR = 0.1, Plot = FALSE, MinESS = 100)
     HVGs_BASiCS <- unlist(as.data.frame(HVGs_BASiCS)$GeneName)
@@ -299,7 +339,7 @@ HiVaGe <- function(sce_object, flavour, percentile) {
     sce_object <- selectFeatures(sce_object, n_features = num_HVGs,
                                  suppress_plot = TRUE) 
     HVGs_scmap <- rowData(sce_object)[rowData(sce_object)$scmap_features == TRUE, ]
-    return(HVGs_scmap)
+    return(rownames(HVGs_scmap))
     
   } else if (flavour == "SIEVE_Scmap") {
     # If your data is a raw counts matrix, method should be chosen from "M3Drop","ROGUE","Scran","Scmap". If your data is a normalized matrix, method should be chosen from "schs"(singleCellHaystack),"Seurat_vst","Seurat_disp","Seurat_sct","ROGUE".
@@ -414,27 +454,260 @@ HiVaGe <- function(sce_object, flavour, percentile) {
   }
 }
 
-correlatedHVGs <- function(hvgs, sce_object) {
-  cor_genes <- correlatePairs(sce_object)
-  cor_genes <- cor_genes[(cor_genes$gene1 %in% hvgs) & (cor_genes$gene2 %in% hvgs),]
-  # Get significant correlated pairs
-  sig_cor_genes <- cor_genes$FDR <= 0.05
-  #summary(sig_cor_genes)
-  # Build undirected graph of correlated genes
-  g_cor_genes <- ftM2graphNEL(cbind(cor_genes$gene1, cor_genes$gene2)[sig_cor_genes,],
-                              W=NULL, V=NULL, edgemode="undirected")
-  # Get clusters of correlated genes
-  cl_cor_genes <- highlyConnSG(g_cor_genes)$clusters
-  # Order them by size
-  cl_cor_genes <- cl_cor_genes[order(lengths(cl_cor_genes), decreasing=TRUE)]
+
+### Main function
+# sce_object
+# labels = vector with true cell types or reference annotated cell types
+# batch = vector containing batch of each cell
+# percentile = percentile of HVGs to get
+# assay.type = c("counts" or "logcounts"), sce_object's assay to use for some metrics
+metricsFromHVGs <- function(hvgs, sce_object, labels = NULL, batch = NULL, percentile = 0.5, assay.type = "counts", method_name = "") {
+  # Prepare results dataframe
+  metrics = c("Dependency with mean expression","Calinski-Harabasz index",
+              "Davies-Bouldin index","Average silhouette width", "Adjusted Rand index",
+              "Average ROGUE score", "Purity score", "rogue_score_boxplot", "hvgs_correlation", "hvgs") 
+  res_df = data.frame(matrix(nrow = 1, ncol = length(metrics))) 
+  colnames(res_df) = metrics
+  rownames(res_df) = method_name
+
+  # Checking if at least 1 HVG found
+  if (length(hvgs) > 0){
+    replaceCat("##Clustering.\n")
+    set.seed(42)
+    ## Clustering based on HVGs
+    # Get data from sce_objectExperiment for the HVGs
+    filtered <- sce_object[hvgs, ]
+    # GLMPCA should reduce dimensions count to amount less then there are HVGs
+    L_ = 10
+    if (length(hvgs) < 10){
+      L_ = round(length(hvgs)/2)
+      replaceCat(paste("Low HVG count (< 10), reducing dimensions to (", length(hvgs), "/2) = ", L_, " dimensions!\n", sep = ""))
+    }
+    replaceCat("Running GLMPCA for dimensionality reduction..")
+    filtered <- GLMPCA(filtered, L=L_, minibatch="stochastic")
+    replaceCat("Building shared nearest-neighbor graph (SNNGraph)..") 
+    g <- buildSNNGraph(filtered, k=10, use.dimred = 'GLMPCA')
+    replaceCat("Performing Louvain clustering..")
+    clust <- cluster_louvain(g)
+    # Add cluster data as a factor to "filtered" variable
+    filtered$Louvain <- factor(membership(clust))
+    # filtered <- runTSNE(filtered, dimred="GLMPCA")
+    # plotTSNE(filtered, colour_by="Louvain")
+    
+    replaceCat("##Moving onto metrics.\n")
+    # Prepare results variable
+    res = list()
+    
+    ### Clustering metrics
+    # Get relevant data
+    if (assay.type == "counts"){
+      sce_data = t(counts(sce_object))
+    } else if (assay.type == "logcounts"){
+      sce_data = t(logcounts(sce_object))
+    } else {
+      stop("\nInnappropriate assay type.\n")
+    }
+    # Make sure clustering vector is proper data type
+    clustering = as.integer(factor(filtered$Louvain))
+    
+    replaceCat("Calculating CH and DB indexes..")
+    res[["Calinski-Harabasz index"]] = index.G1(sce_data, clustering)
+    res[["Davies-Bouldin index"]] = index.DB(sce_data, clustering)$DB
+    
+    replaceCat("Calculating average silhouette width.. (this one takes a bit)")
+    # First get distance matrix
+    sce_dist_matrix = dist(sce_data)
+    # Calculate silhouettes
+    si_asw = silhouette(clustering, sce_dist_matrix)
+    # Get average silhouette width
+    res[["Average silhouette width"]] = summary(si_asw)$avg.width
+    
+    if (!missing(labels)) {
+      replaceCat("Calculating Purity score.. (this one takes a bit)\n")
+      res[["Purity score"]] = getAvrPurity(hvgs, sce_object, labels, tSNE_count = 3)
+      
+      # Make sure labels vector is proper data type for next metric
+      labels = as.integer(factor(labels))
+      replaceCat("Calculating Adjusted Rand index..")
+      res[["Adjusted Rand index"]] = adj.rand.index(labels, clustering)
+    } else {
+      replaceCat("\nSkipping Purity score and Adjusted Rand Index since labels vector not provided.\n")
+    }
+    
+    if (!missing(batch)) {
+      replaceCat("Calculating ROGUE score..\n")
+      temp_rogue = getROGUEScore(hvgs, sce_object, clustering = filtered$Louvain,
+                                 sampling = batch, platform = "full-length",
+                                 assay.type = assay.type)
+      
+      res[["Average ROGUE score"]] = mean(apply(temp_rogue, 1, mean, na.rm=TRUE), na.rm=TRUE)
+      res[["rogue_score_boxplot"]] = rogue.boxplot(as.data.frame(t(temp_rogue)))
+      
+      replaceCat("Calculating dependency with mean expression..")
+      res[["Dependency with mean expression"]] = getOverlapWithHighLowExpressed(hvgs, sce_object, batching = batch)
+    } else {
+      replaceCat("\nSkipping ROGUE score and Dependency with mean expression since batch vector not provided.\n")
+    }
+    
+    replaceCat("Calculating correlation between HVGs (this one takes a bit)..")
+    res[["hvgs_correlation"]] = correlatedHVGs(hvgs, sce_object)
+    res[["hvgs"]] = hvgs
+    
+    res_df[method_name, ] = res
+    
+    replaceCat(paste("##", i, " done.\n", sep = ""))
+  } else {
+    replaceCat(paste("##No HVGs found with ", i, "! Skipping.\n", sep = ""))
+  }
   
-  # Prepare result list
-  res = list()
-  res$gene_correlation_df = cor_genes
-  res$correlated_gene_clusters = cl_cor_genes
-  # Return results
-  return(res)
+  return(res_df)
 }
 
 
-### Get HVGs based on method
+### Main function
+# sce_object
+# labels = vector with true cell types or reference annotated cell types
+# batch = vector containing batch of each cell
+# percentile = percentile of HVGs to get
+# assay.type = c("counts" or "logcounts"), sce_object's assay to use for some metrics
+HiVaGeMetrics <- function(sce_object, labels = NULL, batch = NULL, percentile = 0.5, assay.type = "counts") {
+  # Methods of getting HVGs
+  #c("M3Drop", "M3Drop_Basic", "M3Drop_Brennecke", "ROGUE", "ROGUE_n", "Seurat_vst", "Seurat_sct", "Seurat_disp", 
+  R_flavours = c("scmap","M3Drop", "M3Drop_Basic", "M3Drop_Brennecke", "ROGUE", "ROGUE_n", "Seurat_vst", "Seurat_sct", "Seurat_disp", "scVEGs", "SCHS", "SIEVE_Scmap", "SIEVE_Scran", "SIEVE_ROGUE", "SIEVE_M3Drop", "SIEVE_Seurat_vst", "SIEVE_Seurat_disp", "BASiCS") #"scLVM_log", "scLVM_logvar") "scmap", 
+  Py_flavours = c('scanpy_seurat', 'scanpy_cell_ranger', 'scanpy_Pearson', 'Triku') #"scanpy_seurat_v3"
+  # Full range
+  valid_flavours <- c(R_flavours, Py_flavours)
+  # Flavours grouped by language
+  flavour_flavours = list("R_flavours" = R_flavours, "Py_flavours" = Py_flavours)
+  
+  # Prepare results dataframe
+  metrics = c("Dependency with mean expression","Calinski-Harabasz index",
+              "Davies-Bouldin index","Average silhouette width", "Adjusted Rand index",
+              "Average ROGUE score", "Purity score", "rogue_score_boxplot", "hvgs_correlation") 
+  res_df = data.frame(matrix(nrow = length(valid_flavours), ncol = length(metrics))) 
+  colnames(res_df) = metrics
+  rownames(res_df) = valid_flavours
+  
+  for (group in names(flavour_flavours)) {
+    
+    if (group == "Py_flavours") {
+      replaceCat("Preparing Python script and variables..")
+      # Create dataframe for python methods
+      py_df = as.data.frame(counts(sce))
+      py_df$ProbeIDs = row.names(py_df)
+      py_df <- py_df |>
+        dplyr::select(ProbeIDs, everything())
+      # Convert to pandas dataframe
+      py$ds = r_to_py(py_df)
+      # Source HVGs script (supply path to python methods script)
+      source_python("HiVaGePY.py")
+    }
+    
+    for (i in flavour_flavours[[group]]) {
+      # Get HVGs
+      replaceCat(paste("Starting ", i, ".\n", sep = ""))
+      replaceCat(paste("Getting HVGs (", i, ")..", sep = ""))
+      
+      if (i %in% R_flavours) {
+        hvgs = HiVaGe(sce_object, i, batching = batch, percentile = percentile)
+      } else if (i %in% Py_flavours) {
+        hvgs = HiVaGePY(py$ds, i, percentile)$ProbeIDs
+      } else {
+        replaceCat("Invalid flavor \"", i, "\".\n", sep = "")
+      }
+      
+      # Checking if at least 1 HVG found
+      if (length(hvgs) > 0){
+        replaceCat("##Clustering.\n")
+        set.seed(42)
+        ## Clustering based on HVGs
+        # Get data from sce_objectExperiment for the HVGs
+        filtered <- sce_object[hvgs, ]
+        # GLMPCA should reduce dimensions count to amount less then there are HVGs
+        L_ = 10
+        if (length(hvgs) < 10){
+          L_ = round(length(hvgs)/2)
+          replaceCat(paste("Low HVG count (< 10), reducing dimensions to (", length(hvgs), "/2) = ", L_, " dimensions!\n", sep = ""))
+        }
+        replaceCat("Running GLMPCA for dimensionality reduction..")
+        filtered <- GLMPCA(filtered, L=L_, minibatch="stochastic")
+        replaceCat("Building shared nearest-neighbor graph (SNNGraph)..") 
+        g <- buildSNNGraph(filtered, k=10, use.dimred = 'GLMPCA')
+        replaceCat("Performing Louvain clustering..")
+        clust <- cluster_louvain(g)
+        # Add cluster data as a factor to "filtered" variable
+        filtered$Louvain <- factor(membership(clust))
+        # filtered <- runTSNE(filtered, dimred="GLMPCA")
+        # plotTSNE(filtered, colour_by="Louvain")
+        
+        replaceCat("##Moving onto metrics.\n")
+        # Prepare results variable
+        res = list()
+        
+        ### Clustering metrics
+        # Get relevant data
+        if (assay.type == "counts"){
+          sce_data = t(counts(sce_object))
+        } else if (assay.type == "logcounts"){
+          sce_data = t(logcounts(sce_object))
+        } else {
+          stop("\nInnappropriate assay type.\n")
+        }
+        # Make sure clustering vector is proper data type
+        clustering = as.integer(factor(filtered$Louvain))
+        
+        replaceCat("Calculating CH and DB indexes..")
+        res[["Calinski-Harabasz index"]] = index.G1(sce_data, clustering)
+        res[["Davies-Bouldin index"]] = index.DB(sce_data, clustering)$DB
+        
+        replaceCat("Calculating average silhouette width.. (this one takes a bit)")
+        # First get distance matrix
+        sce_dist_matrix = dist(sce_data)
+        # Calculate silhouettes
+        si_asw = silhouette(clustering, sce_dist_matrix)
+        # Get average silhouette width
+        res[["Average silhouette width"]] = summary(si_asw)$avg.width
+        
+        if (!missing(labels)) {
+          replaceCat("Calculating Purity score.. (this one takes a bit)\n")
+          res[["Purity score"]] = getAvrPurity(hvgs, sce_object, labels, tSNE_count = 3)
+          
+          # Make sure labels vector is proper data type for next metric
+          labels = as.integer(factor(labels))
+          replaceCat("Calculating Adjusted Rand index..")
+          res[["Adjusted Rand index"]] = adj.rand.index(labels, clustering)
+        } else {
+          replaceCat("\nSkipping Purity score and Adjusted Rand Index since labels vector not provided.\n")
+        }
+        
+        if (!missing(batch)) {
+          replaceCat("Calculating ROGUE score..\n")
+          temp_rogue = getROGUEScore(hvgs, sce_object, clustering = filtered$Louvain,
+                                     sampling = batch, platform = "full-length",
+                                              assay.type = assay.type)
+          
+          res[["Average ROGUE score"]] = mean(apply(temp_rogue, 1, mean, na.rm=TRUE), na.rm=TRUE)
+          res[["rogue_score_boxplot"]] = rogue.boxplot(as.data.frame(t(temp_rogue)))
+          
+          replaceCat("Calculating dependency with mean expression..")
+          res[["Dependency with mean expression"]] = getOverlapWithHighLowExpressed(hvgs, sce_object, batching = batch)
+        } else {
+          replaceCat("\nSkipping ROGUE score and Dependency with mean expression since batch vector not provided.\n")
+        }
+        
+        replaceCat("Calculating correlation between HVGs (this one takes a bit)..")
+        res[["hvgs_correlation"]] = correlatedHVGs(hvgs, sce_object)
+        res[["hvgs"]] = hvgs
+        
+        res_df[i,] = res
+        saveRDS(res_df, file = "progress.rds")
+        
+        replaceCat(paste("##", i, " done.\n", sep = ""))
+      } else {
+        replaceCat(paste("##No HVGs found with ", i, "! Skipping.\n", sep = ""))
+      }
+    }
+  }
+  
+  return(res_df)
+}
