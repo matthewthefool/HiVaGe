@@ -310,7 +310,7 @@ HiVaGe <- function(sce_object, flavour, batching = 1, percentile) {
     return(HVGs_seurat_disp)
     
   } else if (flavour == "scVEGs") {
-    source("scVEGs.R")
+    #source("scVEGs.R")
     ds_counts_df <- sce_object %>% 
       counts() %>%
       as.data.frame()
