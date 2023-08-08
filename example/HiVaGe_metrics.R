@@ -24,14 +24,15 @@ library(ROGUE)
 
 ### Set-up libraries for HVGs
 library(reticulate)
-source_python("HiVaGePY.py")
+source_python("R/flowers_and_clouds/HiVaGePY.py")
 
 library(magrittr)
 library(Seurat)
-source("scVEGs.R")
+source("R/flowers_and_clouds/scVEGs.R")
 library("singleCellHaystack")
 library("scmap")
 library(SIEVE)
+library(scLVM)
 
 
 ## Message printing function
@@ -94,9 +95,14 @@ getAvrPurity = function(hvgs, sce_object, labels, tSNE_count = 5) {
     # Running t-SNE (with the library from the paper) on expression data
     sce_tSNE = Rtsne(subset(sce_logcounts_genes, select=-c(CellType)), dims = 2, check_duplicates = FALSE) #, perplexity=50, max_iter=2000, early_exag_coeff=12, stop_lying_iter=1000)
     
+    cluster_num = length(labels)
+    if (length(hvgs) <= cluster_num){
+      cluster_num = round(length(hvgs)/2)
+    }
+
     # K-means clustering. I chose 28 clusters, since that's the amount of predicted
     # cell types. If that's not how that should be done, pls change
-    sce_cluster <- kmeans(sce_tSNE$Y, center=28, nstart=20)
+    sce_cluster <- kmeans(sce_tSNE$Y, center=cluster_num, nstart=20)
     
     # Calculating purity for (i+1)th clustering
     purities[i] = calcPurity(sce_logcounts_genes$CellType, sce_cluster$cluster)
@@ -573,15 +579,15 @@ metricsFromHVGs <- function(hvgs, sce_object, labels = NULL, batch = NULL, perce
 # batch = vector containing batch of each cell
 # percentile = percentile of HVGs to get
 # assay.type = c("counts" or "logcounts"), sce_object's assay to use for some metrics
-HiVaGeMetrics <- function(sce_object, labels = NULL, batch = NULL, percentile = 0.5, assay.type = "counts") {
+HiVaGeMetrics <- function(sce_object, labels = NULL, batch = NULL, percentile = 0.2, assay.type = "counts") {
   # Methods of getting HVGs
   #c("M3Drop", "M3Drop_Basic", "M3Drop_Brennecke", "ROGUE", "ROGUE_n", "Seurat_vst", "Seurat_sct", "Seurat_disp", 
-  R_flavours = c("scmap","M3Drop", "M3Drop_Basic", "M3Drop_Brennecke", "ROGUE", "ROGUE_n", "Seurat_vst", "Seurat_sct", "Seurat_disp", "scVEGs", "SCHS", "SIEVE_Scmap", "SIEVE_Scran", "SIEVE_ROGUE", "SIEVE_M3Drop", "SIEVE_Seurat_vst", "SIEVE_Seurat_disp", "BASiCS") #"scLVM_log", "scLVM_logvar") "scmap", 
+  R_flavours = c()#c("scmap", "M3Drop", "M3Drop_Basic", "M3Drop_Brennecke", "ROGUE", "ROGUE_n", "Seurat_vst", "Seurat_sct", "Seurat_disp", "scVEGs", "SCHS", "SIEVE_Scmap", "SIEVE_Scran", "SIEVE_ROGUE", "SIEVE_M3Drop", "SIEVE_Seurat_vst", "SIEVE_Seurat_disp", "BASiCS", "scLVM_log", "scLVM_logvar")
   Py_flavours = c('scanpy_seurat', 'scanpy_cell_ranger', 'scanpy_Pearson', 'Triku') #"scanpy_seurat_v3"
   # Full range
   valid_flavours <- c(R_flavours, Py_flavours)
   # Flavours grouped by language
-  flavour_flavours = list("R_flavours" = R_flavours)#, "Py_flavours" = Py_flavours)
+  flavour_flavours = list("R_flavours" = R_flavours, "Py_flavours" = Py_flavours)
   
   # Prepare results dataframe
   metrics = c("Overlap with highly expressed genes", "Overlap with lowly expressed genes",
@@ -597,13 +603,14 @@ HiVaGeMetrics <- function(sce_object, labels = NULL, batch = NULL, percentile = 
     other_res_list[[i]] = NA
   }
   
+  k = 1
+  
   for (group in names(flavour_flavours)) {
-    k = 1
-    
+
     if (group == "Py_flavours") {
-      replaceCat("Preparing Python script and variables..")
+      replaceCat("Preparing Python script and variables.. \n")
       # Create dataframe for python methods
-      py_df = as.data.frame(counts(sce))
+      py_df = as.data.frame(counts(sce_object))
       py_df$ProbeIDs = row.names(py_df)
       py_df <- py_df |>
         dplyr::select(ProbeIDs, everything())
@@ -740,13 +747,12 @@ HiVaGeMetrics <- function(sce_object, labels = NULL, batch = NULL, percentile = 
   return(full_res)
 }
 
-#BiocManager::install("RPushbullet")
-# library(RPushbullet)
-# pbSetup()
-# 
-# Mair_m3drop_brenek = try(HiVaGeMetrics(sce, labels = sce$CellTypes, batch = sce$Sample_Tag))
-# if(inherits(Mair_m3drop_brenek, "try-error")){
-#   pbPost("note", "R", "Error encountered.")
-# } else {
-#   pbPost("note", "R", "m3drop brenneke done!")
-# }
+library(RPushbullet)
+pbSetup()
+
+Aztekin_metrics_v1 = try(HiVaGeMetrics(Aztekin_ds, labels = Aztekin_ds$cluster, batch = Aztekin_ds$new_batch, percentile = 0.3, assay.type = "counts"))
+if(inherits(Aztekin_metrics_v1, "try-error")){
+  pbPost("note", "R", "Error encountered.")
+} else {
+  pbPost("note", "R", "Aztekin metrics v1 done!")
+}
