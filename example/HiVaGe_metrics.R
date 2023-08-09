@@ -32,7 +32,7 @@ source("R/flowers_and_clouds/scVEGs.R")
 library("singleCellHaystack")
 library("scmap")
 library(SIEVE)
-library(scLVM)
+#library(scLVM)
 
 
 ## Message printing function
@@ -159,6 +159,7 @@ getROGUEScore <- function(hvgs, sce_object, clustering, sampling, platform, assa
 
 ### Calculate correlation between HVGs
 correlatedHVGs <- function(hvgs, sce_object) {
+  sce_no_dupes = sce_object[!duplicated(counts(sce_object)),]
   cor_genes <- correlatePairs(sce_object)
   cor_genes <- cor_genes[(cor_genes$gene1 %in% hvgs) & (cor_genes$gene2 %in% hvgs),]
   # Get significant correlated pairs
@@ -182,9 +183,9 @@ correlatedHVGs <- function(hvgs, sce_object) {
 
 
 ### Get HVGs based on method
-HiVaGe <- function(sce_object, flavour, batching = 1, percentile) {
+HiVaGe <- function(sce_object, flavour, batching = 1, percentile = 400) {
   # Should already be preinstalled rPython, scLVM, scVEGs (file "scVEGs.R" should be in same directory as "HiVaGe" function), SIEVE
-  num_HVGs <- as.integer(nrow(assays(sce_object)$counts) * percentile)
+  num_HVGs <- as.integer(percentile)
   sce_object <- logNormCounts(sce_object)
   library(scran)
   library(DropletUtils)
@@ -205,7 +206,7 @@ HiVaGe <- function(sce_object, flavour, batching = 1, percentile) {
     library(BASiCS)  # Load the BASiCS package if not already loaded
     BASiCS <- newBASiCS_Data(counts(sce_object), Tech = FALSE, SpikeInfo = NULL, BatchInfo = batching)
     Chain <- BASiCS_MCMC(Data = BASiCS, N = 1000, Thin = 10, Burn = 500, WithSpikes = FALSE, Regression = TRUE, PrintProgress = FALSE)
-    HVGs_BASiCS <- BASiCS_DetectVG(Chain, Task = c("HVG"), PercentileThreshold = percentile, VarThreshold = NULL, ProbThreshold = 0.5, EpsilonThreshold = NULL, EFDR = 0.1, Plot = FALSE, MinESS = 100)
+    HVGs_BASiCS <- BASiCS_DetectVG(Chain, Task = c("HVG"), PercentileThreshold = round(percentile / length(rownames(sce_object)), 2), VarThreshold = NULL, ProbThreshold = 0.5, EpsilonThreshold = NULL, EFDR = 0.1, Plot = FALSE, MinESS = 100)
     HVGs_BASiCS <- unlist(as.data.frame(HVGs_BASiCS)$GeneName)
     return(HVGs_BASiCS)
     
@@ -467,7 +468,7 @@ HiVaGe <- function(sce_object, flavour, batching = 1, percentile) {
 # batch = vector containing batch of each cell
 # percentile = percentile of HVGs to get
 # assay.type = c("counts" or "logcounts"), sce_object's assay to use for some metrics
-metricsFromHVGs <- function(hvgs, sce_object, labels = NULL, batch = NULL, percentile = 0.5, assay.type = "counts", method_name = "") {
+metricsFromHVGs <- function(hvgs, sce_object, labels = NULL, batch = NULL, percentile = 400, assay.type = "counts", method_name = "") {
   # Prepare results dataframe
   metrics = c("Overlap with highly expressed genes", "Overlap with lowly expressed genes",
               "Pearson's correlation between mean and variance","Calinski-Harabasz index",
@@ -579,10 +580,10 @@ metricsFromHVGs <- function(hvgs, sce_object, labels = NULL, batch = NULL, perce
 # batch = vector containing batch of each cell
 # percentile = percentile of HVGs to get
 # assay.type = c("counts" or "logcounts"), sce_object's assay to use for some metrics
-HiVaGeMetrics <- function(sce_object, labels = NULL, batch = NULL, percentile = 0.2, assay.type = "counts") {
+HiVaGeMetrics <- function(sce_object, labels = NULL, batch = NULL, percentile = 400, assay.type = "counts") {
   # Methods of getting HVGs
-  #c("M3Drop", "M3Drop_Basic", "M3Drop_Brennecke", "ROGUE", "ROGUE_n", "Seurat_vst", "Seurat_sct", "Seurat_disp", 
-  R_flavours = c()#c("scmap", "M3Drop", "M3Drop_Basic", "M3Drop_Brennecke", "ROGUE", "ROGUE_n", "Seurat_vst", "Seurat_sct", "Seurat_disp", "scVEGs", "SCHS", "SIEVE_Scmap", "SIEVE_Scran", "SIEVE_ROGUE", "SIEVE_M3Drop", "SIEVE_Seurat_vst", "SIEVE_Seurat_disp", "BASiCS", "scLVM_log", "scLVM_logvar")
+  #c("scmap","M3Drop", "M3Drop_Basic", "M3Drop_Brennecke", "ROGUE", "ROGUE_n", "Seurat_vst", "Seurat_sct", "Seurat_disp", 
+  R_flavours = c("scmap","M3Drop", "M3Drop_Basic", "M3Drop_Brennecke", "ROGUE", "ROGUE_n", "Seurat_vst", "Seurat_sct", "Seurat_disp", "scVEGs", "SCHS", "SIEVE_Scmap", "SIEVE_Scran", "SIEVE_ROGUE", "SIEVE_M3Drop", "SIEVE_Seurat_vst", "SIEVE_Seurat_disp", "BASiCS") #"scLVM_log", "scLVM_logvar")
   Py_flavours = c('scanpy_seurat', 'scanpy_cell_ranger', 'scanpy_Pearson', 'Triku') #"scanpy_seurat_v3"
   # Full range
   valid_flavours <- c(R_flavours, Py_flavours)
@@ -747,12 +748,11 @@ HiVaGeMetrics <- function(sce_object, labels = NULL, batch = NULL, percentile = 
   return(full_res)
 }
 
-library(RPushbullet)
-pbSetup()
+Mair_v3 = try(HiVaGeMetrics(Mair_ds, labels = Mair_ds$CellTypes, batch = Mair_ds$Sample_Tag, percentile = 400, assay.type = "counts"))
+# if(inherits(Mair_v3, "try-error")){
+#   pbPost("note", "R", "Mair_v3 Error encountered.")
+# } else {
+#   pbPost("note", "R", "Mair_v3 done!")
+# }
 
-Aztekin_metrics_v1 = try(HiVaGeMetrics(Aztekin_ds, labels = Aztekin_ds$cluster, batch = Aztekin_ds$new_batch, percentile = 0.3, assay.type = "counts"))
-if(inherits(Aztekin_metrics_v1, "try-error")){
-  pbPost("note", "R", "Error encountered.")
-} else {
-  pbPost("note", "R", "Aztekin metrics v1 done!")
-}
+# saveRDS(Mair_v3, file = "Mair_v3_one_09082023.rds")
