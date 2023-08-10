@@ -5,7 +5,26 @@ library(scater)
 #loading dataset
 sce.lawlor =  LawlorPancreasData()
 
+# Making a plot that shows that there's clear distinction in cells that have big UMIs and low UMIs. Inflection is 100 UMIs so we could use default threshold. Big difference in genes expression we consider normal, as we have PBMC cells, most of which are specific to some function and don't express big amount of genes.
+bcrank <- barcodeRanks(counts(sce.lawlor))
 
+# Only showing unique points for plotting speed.
+uniq <- !duplicated(bcrank$rank)
+plot(bcrank$rank[uniq], bcrank$total[uniq], log="xy",
+     xlab="Rank", ylab="Total UMI count", cex.lab=1.2)
+
+abline(h=metadata(bcrank)$inflection, col="darkgreen", lty=2)
+abline(h=metadata(bcrank)$knee, col="dodgerblue", lty=2)
+
+legend("bottomleft", legend=c("Inflection", "Knee"), 
+       col=c("darkgreen", "dodgerblue"), lty=2, cex=1.2)
+
+
+# Delete cells that have 0 genes expressed and genes that are expressed in 0 cells
+summary(colMeans(counts(sce.lawlor) == 0))
+summary(rowMeans(counts(sce.lawlor) == 0))
+allzero <- rowMeans(counts(sce.lawlor) == 0) == 1
+sce.lawlor <- sce.lawlor[which(!allzero), ]
 
 #annotation
 library(AnnotationHub)
@@ -23,33 +42,3 @@ stats <- perCellQCMetrics(sce.lawlor,
 qc <- quickPerCellQC(stats, percent_subsets="subsets_Mito_percent",
                      batch=sce.lawlor$`islet unos id`)
 sce.lawlor <- sce.lawlor[,!qc$discard]
-
-#Remove transcripts with low total counts
-total_counts_threshold <- 10  # Set your desired total counts threshold here, originally was 10
-
-#Calculate total counts for each transcript
-transcript_total_counts <- rowSums(counts(sce.lawlor))
-
-# Subset transcripts with total counts above the threshold
-sce <- sce.lawlor[transcript_total_counts >= total_counts_threshold, ]
-
-
-# colData(unfiltered) <- cbind(colData(unfiltered), stats)
-# unfiltered$discard <- qc$discard
-# 
-# gridExtra::grid.arrange(
-#   plotColData(unfiltered, x="islet unos id", y="sum", colour_by="discard") +
-#     scale_y_log10() + ggtitle("Total count") +
-#     theme(axis.text.x = element_text(angle = 90)),
-#   plotColData(unfiltered, x="islet unos id", y="detected", 
-#               colour_by="discard") + scale_y_log10() + ggtitle("Detected features") +
-#     theme(axis.text.x = element_text(angle = 90)), 
-#   plotColData(unfiltered, x="islet unos id", y="subsets_Mito_percent",
-#               colour_by="discard") + ggtitle("Mito percent") +
-#     theme(axis.text.x = element_text(angle = 90)),
-#   ncol=2
-# )
-# 
-# 
-# plotColData(unfiltered, x="sum", y="subsets_Mito_percent",
-#             colour_by="discard") + scale_x_log10()
