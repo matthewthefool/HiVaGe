@@ -8,8 +8,7 @@ The repository contains the following:
 
 - **Benchmarking folder:** Benchmarking of X tools for HVGs identification on X datasets.
 
-Descriptions of all files are available, providing insights into the data and results.
+Descriptions of all files are available.
 
-Feel free to explore the repository and leverage the utility for your scRNA-seq analysis!
 
 
