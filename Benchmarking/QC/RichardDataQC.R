@@ -35,3 +35,5 @@ pred <- SingleR(test = Richard_ds, ref = ref, labels = ref$label.fine, assay.typ
 Richard_ds$CellTypes <- factor(pred$pruned.labels)
 
 Richard_ds$CellTypes
+
+Richard_ds$new_batch = paste0(Richard_ds$time, Richard_ds$stimulus)
