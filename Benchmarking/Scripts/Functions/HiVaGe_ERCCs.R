@@ -12,7 +12,7 @@ selected_genes <- rownames(sce) %in% rownames(sce)[1:200]
 sce_subset <- sce[selected_genes, ]
 
 # Main function
-HiVaGe <- function(sce_object, flavour, batching = 1, num_HVGs = 400, ERCCs) {
+HiVaGe <- function(sce_object, flavour, batching = 1, num_HVGs = 400, ERCCs = NULL) {
   # Should already be preinstalled rPython, scLVM, scVEGs (file "scVEGs.R" should be in same directory as "HiVaGe" function), SIEVE
   library(scran)
   library(DropletUtils)
