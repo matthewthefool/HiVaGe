@@ -66,8 +66,8 @@ chr.loc = mapIds(mm_87,
        column="SEQNAME", keytype="SYMBOL")
 is.mito <- which(chr.loc=="MT")
 
-Aztekin_ds <- addPerCellQC(Aztekin_ds)
-Aztekin_ds <- addPerCellQC(Aztekin_ds, subsets=list(Mito=is.mito))
+Campbell_ds <- addPerCellQC(Campbell_ds)
+Campbell_ds <- addPerCellQC(Campbell_ds, subsets=list(Mito=is.mito))
 
 discard.ercc <- isOutlier(Campbell_ds$subsets_Mito_percent,
                           type="higher", batch=Campbell_ds$group)
