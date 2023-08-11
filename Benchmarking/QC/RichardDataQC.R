@@ -21,3 +21,17 @@ Richard_ds <- Richard_ds[which(!allzero), ]
 
 #cleaning up in accordance with metadata
 Richard_ds = Richard_ds[,Richard_ds$`single cell quality` == "OK"]
+
+Richard_ds <- logNormCounts(Richard_ds)
+Richard_ds <- runPCA(Richard_ds)
+
+# Load reference data for SingleR
+ref <- ImmGenData(ensembl = TRUE)
+
+# Perform SingleR prediction on 'Richard_ds' using the reference data
+pred <- SingleR(test = Richard_ds, ref = ref, labels = ref$label.fine, assay.type.test = "logcounts")
+
+# Assign the predicted cell types to 'Richard_ds$CellTypes'
+Richard_ds$CellTypes <- factor(pred$pruned.labels)
+
+Richard_ds$CellTypes
