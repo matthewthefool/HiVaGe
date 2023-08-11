@@ -2,6 +2,11 @@ library(scRNAseq)
 library(EnsDb.Hsapiens.v86)
 Mair_ds <- MairPBMCData()
 View(Mair_ds)
+
+rownames(Mair_ds) <- rowData(Mair_ds)$Symbol
+new_rownames = gsub("_", "-", rownames(Mair_ds))
+rownames(Mair_ds) = make.names(new_rownames, unique=TRUE)
+
 # Making a plot that shows that there's clear distinction in cells that have big UMIs and low UMIs. Inflection is 100 UMIs so we could use default threshold. Big difference in genes expression we consider normal, as we have PBMC cells, most of which are specific to some function and don't express big amount of genes.
 bcrank <- barcodeRanks(counts(Mair_ds))
 
@@ -54,10 +59,8 @@ df <- perCellQCMetrics(Mair_ds)
 reasons <- perCellQCFilters(df)
 Mair_ds <- Mair_ds[,!reasons$discard]
 
-
 Mair_ds <- logNormCounts(Mair_ds)
-
-
+Mair_ds <- runPCA(Mair_ds)
 
 # Load reference data for SingleR
 ref <- MonacoImmuneData()
@@ -67,11 +70,3 @@ pred <- SingleR(test = Mair_ds, ref = ref, labels = ref$label.fine, assay.type.t
 
 # Assign the predicted cell types to 'sce$CellTypes'
 Mair_ds$CellTypes <- factor(pred$pruned.labels)
-
-Mair_ds <- logNormCounts(Mair_ds)
-
-Mair_ds <- runPCA(Mair_ds)
-
-rownames(Mair_ds) <- rowData(Mair_ds)$Symbol
-new_rownames = gsub("_", "-", rownames(Mair_ds))
-rownames(Mair_ds) = make.names(new_rownames, unique=TRUE)
