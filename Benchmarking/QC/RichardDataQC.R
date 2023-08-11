@@ -16,41 +16,8 @@ legend("bottomleft", legend=c("Inflection", "Knee"),
        col=c("darkgreen", "dodgerblue"), lty=2, cex=1.2)
 
 
-
-
 allzero <- rowMeans(counts(Richard_ds) == 0) == 1
 Richard_ds <- Richard_ds[which(!allzero), ]
 
-Richard_ds <- logNormCounts(Richard_ds)
-Richard_ds <- runPCA(Richard_ds)
-library(scDblFinder)
-dbl.dens <- computeDoubletDensity(Richard_ds, d=ncol(reducedDim(Richard_ds)))
-Richard_ds$DoubletScore <- dbl.dens
-dbl.calls <- doubletThresholding(data.frame(score=dbl.dens),
-                                 method="griffiths", returnType="call")
-Richard_ds <- Richard_ds[, dbl.calls == "singlet"]
-
-
-
-
-
-library(ensembldb)
-library(EnsDb.Mmusculus.v75)
-
-ens.mm.v75 <- EnsDb.Mmusculus.v75
-
-
-#annotation
-rowData(Richard_ds)$location <- mapIds(ens.mm.v75,
-                                    keys=rownames(rowData(Richard_ds)), 
-                                    column="SEQNAME", keytype="GENEID")
-stats <- perCellQCMetrics(Richard_ds, subsets=list(Mito=which(rowData(Richard_ds)$location=="MT")), use.altexps=TRUE)
-high.mito <- isOutlier(stats$subsets_Mito_percent, type="higher")
-Richard_ds <- Richard_ds[,!high.mito]
-
-# Discarding cells using perCellQCMetrics
-df <- perCellQCMetrics(Richard_ds)
-reasons <- perCellQCFilters(stats, sub.fields = TRUE)
-Richard_ds <- Richard_ds[,!reasons$discard]
-
-
+#cleaning up in accordance with metadata
+Richard_ds = Richard_ds[,Richard_ds$`single cell quality` == "OK"]
