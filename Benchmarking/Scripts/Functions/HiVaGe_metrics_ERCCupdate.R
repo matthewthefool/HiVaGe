@@ -1,5 +1,3 @@
-setwd("C:/Users/redegator/PycharmProjects/HiVaGe/HiVaGe/example")
-
 ### Set-up libraries for metrics
 library(dplyr)
 library(scRNAseq)
@@ -148,7 +146,7 @@ getROGUEScore <- function(hvgs, sce_object, clustering, sampling, platform, assa
       } else {
         stop("Innappropriate assay type")
       }
-      
+      #print(paste("tmp:", tmp))
       # Filter out data will too little cells
       if (dim(tmp)[2] >= min.cell.n) {
         # Running the S-E model
@@ -463,7 +461,7 @@ HiVaGe <- function(sce_object, flavour, batching = 1, num_HVGs = 400, ERCCs = NU
   } else if (flavour == "scLVM_counts") {
     library(scLVM)
     norm_counts <- counts(sce_object) / colData(sce_object)$sizeFactor
-    techNoise = fitTechnicalNoise(norm_counts, nCountsERCC = ERCCs, fit_type = 'counts', use_ERCC = TRUE, plot=FALSE) 
+    techNoise = fitTechnicalNoise(norm_counts, fit_type = 'counts', use_ERCC = FALSE, plot=FALSE) 
     is_hetLog = getVariableGenes(norm_counts, techNoise$fit, plot=FALSE)
     HVGs_scLVM_counts <- is_hetLog[is_hetLog] %>%
       which() %>%
@@ -525,7 +523,7 @@ HiVaGe <- function(sce_object, flavour, batching = 1, num_HVGs = 400, ERCCs = NU
   } else if (flavour == "scLVM_log_ERCCs") {
     library(scLVM)
     norm_counts <- counts(sce_object) / colData(sce_object)$sizeFactor
-    techNoise = fitTechnicalNoise(norm_counts, nCountsERCC = CountsERCC, fit_type = 'log', use_ERCC = TRUE, plot=FALSE) 
+    techNoise = fitTechnicalNoise(norm_counts, nCountsERCC = ERCCs, fit_type = 'log', use_ERCC = TRUE, plot=FALSE) 
     is_hetLog = getVariableGenes(norm_counts, techNoise$fit, plot=FALSE)
     HVGs_scLVM_log <- is_hetLog[is_hetLog] %>%
       which() %>%
@@ -535,7 +533,7 @@ HiVaGe <- function(sce_object, flavour, batching = 1, num_HVGs = 400, ERCCs = NU
   } else if (flavour == "scLVM_logvar_ERCCs") {
     library(scLVM)
     norm_counts <- counts(sce_object) / colData(sce_object)$sizeFactor
-    techNoise = fitTechnicalNoise(norm_counts, nCountsERCC = CountsERCC, fit_type = 'logvar', use_ERCC = TRUE, plot=FALSE) 
+    techNoise = fitTechnicalNoise(norm_counts, nCountsERCC = ERCCs, fit_type = 'logvar', use_ERCC = TRUE, plot=FALSE) 
     is_hetLog = getVariableGenes(norm_counts, techNoise$fit, plot=FALSE)
     HVGs_scLVM_logvar <- is_hetLog[is_hetLog] %>%
       which() %>%
@@ -644,7 +642,7 @@ HiVaGeMetrics <- function(sce_object, labels = NULL, batch = NULL, num_HVGs = 40
         res[["Runtime"]] = as.numeric(time_temp$toc-time_temp$tic)
       } else if (i %in% Py_flavours) {
         tic()
-        hvgs = HiVaGePY(py$ds, i, num_HVGs = 400)$ProbeIDs
+        hvgs = HiVaGePY(py$ds, i, HVGs_num = 400)$ProbeIDs
         time_temp = toc()
         res[["Runtime"]] = as.numeric(time_temp$toc-time_temp$tic)
       } else if (i %in% R_ERCCs_flavours) {
@@ -657,7 +655,7 @@ HiVaGeMetrics <- function(sce_object, labels = NULL, batch = NULL, num_HVGs = 40
       }
       
       # Checking if at least 1 HVG found
-      if (length(hvgs) > 0){
+      if (length(hvgs) > 1){
         res[["hvgs"]] = paste(hvgs, collapse = ", ")
         write.csv(hvgs, file = file.path(paste0(hvgs_folder,"_HVGs_csv"), paste0(i, "_", hvgs_folder, "_HVGs.csv")))
         
@@ -722,13 +720,13 @@ HiVaGeMetrics <- function(sce_object, labels = NULL, batch = NULL, num_HVGs = 40
         }
         
         if (!is.null(batch)) {
-          replaceCat("Calculating ROGUE score..\n")
-          temp_rogue = getROGUEScore(hvgs, filtered, clustering = filtered$Louvain,
-                                     sampling = batch, platform = "full-length",
-                                     assay.type = assay.type)
+          #replaceCat("Calculating ROGUE score..\n")
+          #temp_rogue = getROGUEScore(hvgs, filtered, clustering = filtered$Louvain,
+          #                           sampling = batch, platform = "full-length",
+          #                           assay.type = assay.type)
           
-          res[["Average ROGUE score"]] = mean(apply(temp_rogue, 1, mean, na.rm=TRUE), na.rm=TRUE)
-          res_other[["rogue_score_boxplot"]] = rogue.boxplot(as.data.frame(t(temp_rogue)))
+          #res[["Average ROGUE score"]] = mean(apply(temp_rogue, 1, mean, na.rm=TRUE), na.rm=TRUE)
+          #res_other[["rogue_score_boxplot"]] = rogue.boxplot(as.data.frame(t(temp_rogue)))
           
           replaceCat("Calculating dependency with mean expression..")
           depend_list = getOverlapWithHighLowExpressed(hvgs, sce_object, batching = batch)
@@ -738,6 +736,7 @@ HiVaGeMetrics <- function(sce_object, labels = NULL, batch = NULL, num_HVGs = 40
         } else {
           replaceCat("\nSkipping ROGUE score and Dependency with mean expression since batch vector not provided.\n")
         }
+        
         replaceCat("Calculating correlation between HVGs (this one takes a bit)..")
         res_other[["hvgs_correlation"]] = correlatedHVGs(hvgs, filtered)
         
@@ -769,7 +768,7 @@ if(inherits(Campbell_v1, "try-error")){
   pbPost("note", "R", "Campbell_v1 done!")
 }
 
-saveRDS(Campbell_v1, file = "Campbell_v1_one_11082023.rds")
+saveRDS(Campbell_v1, file = "Campbell_v1_one_12082023.rds")
 
 
 ###########
