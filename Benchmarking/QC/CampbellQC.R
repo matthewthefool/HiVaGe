@@ -10,6 +10,10 @@ library(scDblFinder)
 
 #loading dataset
 Campbell_ds = CampbellBrainData()
+
+rowData(Campbell_ds)$is_spike = grepl("ERCC", rownames(Campbell_ds))
+altExp(Campbell_ds, "ERCC") = Campbell_ds[rowData(Campbell_ds)$is_spike]
+Campbell_ds = Campbell_ds[!rowData(Campbell_ds)$is_spike]
 # No need for batch correction because there's clustering 
 bcrank <- barcodeRanks(counts(Campbell_ds))
 uniq <- !duplicated(bcrank$rank)
