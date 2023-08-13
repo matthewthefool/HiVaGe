@@ -30,8 +30,11 @@ Buettner_ds = Buettner_ds[,rownames(bcrank[order(bcrank$total),][-(1:9),])]
 
 
 # remove low ave.counts
-ave.counts <- rowMeans(counts(Buettner_ds))
-Buettner_ds <- Buettner_ds[ave.counts >= 10, ]
+allzero <- rowMeans(counts(Buettner_ds) == 0) == 1
+# Create a table showing the number of cells with all-zero counts
+table(allzero)
+# Remove cells with all-zero counts for all genes from 'sce'
+Buettner_ds <- Buettner_ds[which(!allzero),]
 
 # logcounts for PCA
 Buettner_ds <- logNormCounts(Buettner_ds)
