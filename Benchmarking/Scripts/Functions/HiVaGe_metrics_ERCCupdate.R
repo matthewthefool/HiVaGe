@@ -23,7 +23,6 @@ library(tibble)
 library(ROGUE)
 
 ### Set-up libraries for HVGs
-#setwd("C:/Users/redegator/PycharmProjects/HiVaGe/HiVaGe/example")
 library(reticulate)
 source_python("HiVaGePY.py")
 
@@ -36,7 +35,7 @@ library(SIEVE)
 library(scLVM)
 library(tictoc)
 
-## Message printing function
+## Message printing function for outputting progress
 replaceCat <- function(x, width = 50)
 {
   cat("\r",rep(" ", times = width - length(x)), "\r")
@@ -44,17 +43,26 @@ replaceCat <- function(x, width = 50)
 }
 
 
-### Dependency with mean expression testing
+### Testing the dependency with the mean expression
+# hvgs - vector containing HVGs
+# sce_object - SigleCellExperiment object
+# batching=1 - vector containing batches' number for each cell. doesn't impact the result if not set
+# amount_of_genes_to_check=length(hvgs) - the amount of highly expressed genes to check the overlap of HVGs with. if not set, equals the length of hvgs vector
 getOverlapWithHighLowExpressed <- function(hvgs, sce_object, batching = 1, amount_of_genes_to_check = length(hvgs)) {
+  # Processing batching input
   batches = levels(factor(batching))
+  # Calculation of pseudobulk expression data
   pseudo_bulk = matrix(nrow = length(rownames(sce_object)), ncol = length(batches))
   colnames(pseudo_bulk) = batches
   for (i in batches) {
     pseudo_bulk[,i] = apply(counts(sce_object[, batching == i]), 1, sum)
   }
+  # Normalization between different batches
   pseudo_bulk = normalizeCounts(pseudo_bulk)
+  # Vector of average explassion of the genes
   avr_expr = apply(pseudo_bulk, 1, mean)
   names(avr_expr) = rownames(counts(sce_object))
+  # Sorting vector's values from highest expression to lowest
   avr_expr = sort(avr_expr, decreasing = TRUE)
   
   # Get the set amount of highly/lowly expressed genes to test overlap
@@ -64,20 +72,28 @@ getOverlapWithHighLowExpressed <- function(hvgs, sce_object, batching = 1, amoun
   # Calculate and return overlap
   overlap_h = table(unique(c(hvgs)) %in% hegs)
   overlap_l = table(unique(c(hvgs)) %in% legs)
-  
+
+  # Calculate general correlation between gene expression varience and the mean
   expr_var_cor = cor(log(apply(counts(sce_object), 1, mean)), log(apply(counts(sce_object), 1, var)), method = "pearson")
+
+  # Return list containing overlap with highly expressed genes, lowly expressed genes and correaltion mean~variance for the dataset.
   return(list(highly_overlap = unname(overlap_h["TRUE"]/sum(overlap_h)), lowly_overlap = unname(overlap_l["TRUE"]/sum(overlap_l)), correlation_meanVariance = expr_var_cor))
 }
 
 
 ### Purity testing
+## Function for calculatioon of purity in accordance with its math formula 
+# clusters - vector containing cluster's number for each cell
+# classes - vector containing cell type for each cell
 calcPurity = function(clusters, classes) {
-  # Just the purity math formula
   sum(apply(table(classes, clusters), 1, max))/length(clusters)
 }
 
+## Function for calculating average purity
 getAvrPurity = function(hvgs, sce_object, labels, tSNE_count = 5) {
+  # Setting seed for consistent clustering
   set.seed(42)
+  # Outputting information about the running function
   replaceCat(paste("Chosen t-SNE count:", tSNE_count, ".\n", sep = ""))
   # Retrieve relevant data
   sce_logcounts = logcounts(sce_object)
@@ -90,13 +106,17 @@ getAvrPurity = function(hvgs, sce_object, labels, tSNE_count = 5) {
   sce_logcounts_genes$CellType = labels
   # Removing duplicates (ignoring the CellType column)
   sce_logcounts_genes = sce_logcounts_genes[!duplicated(subset(sce_logcounts_genes, select=-c(CellType))), ]
-  
+
+  # Disallowing for division by 0 further down the line
   if (nrow(sce_logcounts_genes) > 3) {
+    
+    # Fix the perplexity with accordance to amount of genes
     moving_perplexity = floor((nrow(sce_logcounts_genes) - 2) / 3)
     if (moving_perplexity > 50) {
       moving_perplexity = 50
     }
 
+    # Repeat tSNE the required set of times
     for (i in 1:tSNE_count) {
       replaceCat(paste("Running t-SNE #", i, "...", sep = ""))
       # Running t-SNE (with the library from the paper) on expression data
@@ -122,6 +142,11 @@ getAvrPurity = function(hvgs, sce_object, labels, tSNE_count = 5) {
 
 
 ### Calculate ROGUE scores for each cluster for each sample
+# hvgs - vector containing HVGs
+# sce_object - SigleCellExperiment object
+# clustering - vector containing cluster's number for each cell
+# sampling - vector containing sample's number for each cell. doesn't impact the result if not set
+# amount_of_genes_to_check=length(hvgs) - the amount of highly expressed genes to check the overlap of HVGs with. if not set, equals the length of hvgs vector
 getROGUEScore <- function(hvgs, sce_object, clustering, sampling, platform, assay.type = "counts", min.cell.n = 10) {
   # Get all the cluster names
   clusters = unique(clustering)
@@ -555,8 +580,8 @@ HiVaGe <- function(sce_object, flavour, batching = 1, num_HVGs = 400, ERCCs = NU
 
 
 ### Main function
-# sce_object
-# labels, vector with true cell types or reference annotated cell types
+# sce_object - SingleCellExperiment variable
+# labels - vector with types of the cells or reference-annotated cell types
 # batch, vector containing batch of each cell
 # num_HVGs = 400, num of HVGs to get
 # assay.type = c("counts" or "logcounts"), sce_object's assay to use for some metrics
