@@ -58,10 +58,6 @@ Buettner_ds <- Buettner_ds[, dbl.calls == "singlet"]
 # Perform PCA again
 Buettner_ds <- runPCA(Buettner_ds)
 
-# rowData(Buettner_ds)$is_spike = grepl("ERCC", rownames(Buettner_ds))
-# altExp(Buettner_ds, "ERCC") = Buettner_ds[rowData(Buettner_ds)$is_spike]
-# Buettner_ds = Buettner_ds[!rowData(Buettner_ds)$is_spike]
-
 # Loading the annotation dataset
 library(EnsDb.Mmusculus.v75)
 ens.mm.v75 = EnsDb.Mmusculus.v75
