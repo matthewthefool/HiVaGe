@@ -61,7 +61,7 @@ Buettner_ds <- runPCA(Buettner_ds)
 # Loading the annotation dataset
 library(EnsDb.Mmusculus.v75)
 ens.mm.v75 = EnsDb.Mmusculus.v75
-# Annotate genes
+# Get a vector containing gene loci information
 chr.loc <- mapIds(ens.mm.v75, keys=rownames(Buettner_ds),
                   keytype="GENEID", column="SEQNAME")
 # Vector containing information about if gene is mitochondrial
