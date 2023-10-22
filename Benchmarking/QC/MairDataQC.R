@@ -37,32 +37,38 @@ Mair_ds <- Mair_ds[which(!allzero), ]
 # Delete multiplets
 Mair_ds <- Mair_ds[, which(colData(Mair_ds)$Sample_Tag != "Multiplet")]
 
-# Check if we have mito genes
+## Check if we have mito genes
+# Get a vector containing gene loci information
 rowData(Mair_ds)$location <- mapIds(EnsDb.Hsapiens.v86,
                                      keys=rowData(Mair_ds)$Symbol, 
                                      column="SEQNAME", keytype="GENENAME")
+# Vector containing information about if gene is mitochondrial
 is.mito <- which(rowData(Mair_ds)$location=="MT")
 
+# Get QC metrics
 Mair_ds = addPerCellQC(Mair_ds)
 
+# Get QC metrics based on mito genes
 stats <- perCellQCMetrics(Mair_ds, subsets=list(Mito=which(rowData(Mair_ds)$location=="MT")))
+# Cells with high mito are outliers
 high.mito <- isOutlier(stats$subsets_Mito_percent, type="higher")
 table(high.mito)
-
-# No batch correction needed because We found that cells from different donors comingled and separated by cell type rather than by donor, suggesting that there was no cluster driven by a single donor (Figure 3A, left panel). Also, the two experimental batches (cartridges) did not show significant separation on a UMAP plot calculated using transcripts or proteins (Figure 3A, right panel).
+# No batch correction needed acording to authors of the dataset
 
 # Discarding cells using perCellQCMetrics
 df <- perCellQCMetrics(Mair_ds)
 reasons <- perCellQCFilters(df)
+# Remove outlier cells
 Mair_ds <- Mair_ds[,!reasons$discard]
 
+# Get logcounts and perform PCA for the data
 Mair_ds <- logNormCounts(Mair_ds)
 Mair_ds <- runPCA(Mair_ds)
 
 # Load reference data for SingleR
 ref <- MonacoImmuneData()
 
-# Perform SingleR prediction on 'sce' using the reference data
+# Perform SingleR prediction on 'Mair_ds' using the reference data
 pred <- SingleR(test = Mair_ds, ref = ref, labels = ref$label.fine, assay.type.test = "logcounts")
 
 # Assign the predicted cell types to 'sce$CellTypes'
